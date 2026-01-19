@@ -1,6 +1,6 @@
-using BepInSoft.Core.Models;
+using BepInSerializer.Core.Models;
 
-namespace BepInSoft.Utils;
+namespace BepInSerializer.Utils;
 
 internal static class CacheUtils
 {

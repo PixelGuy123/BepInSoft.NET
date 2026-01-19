@@ -1,9 +1,7 @@
-using BepInSoft.Core.JSON;
-using BepInSoft.Core.Serialization;
-using BepInSoft.Patches.Serialization;
-using BepInSoft.Utils;
+using BepInSerializer.Core.Serialization;
+using BepInSerializer.Utils;
 
-namespace BepInSoft.Core;
+namespace BepInSerializer.Core;
 
 // Basically only triggered by the Plugin to initialize the cache after the configurations are all set in
 internal static class LRUCacheInitializer
@@ -13,10 +11,6 @@ internal static class LRUCacheInitializer
         int sizeForTypesCache = BridgeManager.sizeForTypesReflectionCache.Value;
         int sizeForMemberAccessCache = BridgeManager.sizeForMemberAccessReflectionCache.Value;
         int controlledSizeForTypes = sizeForTypesCache > 450 ? sizeForTypesCache / 10 : sizeForTypesCache / 2;
-
-        // SerializationHandler
-        SerializationHandler.debugEnabled = BridgeManager.enableDebugLogs.Value;
-        SerializationHandler.FieldInfoCache = new(controlledSizeForTypes);
 
         // Reflection Utils
         ReflectionUtils.FieldInfoGetterCache = new(sizeForMemberAccessCache);
@@ -28,23 +22,18 @@ internal static class LRUCacheInitializer
         ReflectionUtils.ArrayActivatorConstructorCache = new(controlledSizeForTypes);
         ReflectionUtils.SelfActivatorConstructorCache = new(controlledSizeForTypes);
         ReflectionUtils.TypeToFieldsInfoCache = new(controlledSizeForTypes);
+        ReflectionUtils.FieldInfoCache = new(controlledSizeForTypes);
 
         // SerializationRegistry
         SerializationRegistry._cachedRootTypes = new(sizeForTypesCache);
 
-        // SerializationObserver
-        SerializationObserver._typeBeforeSerializationCache = new(sizeForTypesCache);
-        SerializationObserver._typeAfterSerializationCache = new(sizeForTypesCache);
-        SerializationObserver._typeAwakeCache = new(sizeForTypesCache);
-        SerializationObserver._typeOnEnableCache = new(sizeForTypesCache);
+        // LifecycleSuppressor
+        LifecycleSuppressor._methodCache = new(sizeForTypesCache * 2);
 
         // Assembly Utils
         AssemblyUtils.CollectionNestedElementTypesCache = new(controlledSizeForTypes);
         AssemblyUtils.TypeIsManagedCache = new(controlledSizeForTypes);
         AssemblyUtils.TypeIsUnityManagedCache = new(controlledSizeForTypes);
         AssemblyUtils._cacheIsAvailable = true;
-
-        // UnityContractResolver
-        UnityContractResolver.propsCache = new(controlledSizeForTypes);
     }
 }

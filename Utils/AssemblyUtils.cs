@@ -1,13 +1,12 @@
 using System.Reflection;
 using System.IO;
-using BepInSoft.Core.Serialization;
 using System;
 using UnityEngine;
 using System.Collections.Generic;
 using System.Collections;
-using BepInSoft.Core.Models;
+using BepInSerializer.Core.Models;
 
-namespace BepInSoft.Utils;
+namespace BepInSerializer.Utils;
 
 internal static class AssemblyUtils
 {
@@ -22,9 +21,6 @@ internal static class AssemblyUtils
     public static bool IsFromGameAssemblies(this Type type)
     {
         // Obviously the handler shouldn't be accounted at all
-        if (type == typeof(SerializationHandler))
-            return true;
-
         var assembly = type.Assembly;
 
         if (typeof(BepInEx.BaseUnityPlugin).IsAssignableFrom(type)) // Never a plugin
@@ -80,20 +76,19 @@ internal static class AssemblyUtils
         // First, what it CAN serialize by default
         if (type.IsPrimitive || type == typeof(string) || type.IsEnum) return true;
 
-        // Check for collections that are not supported by default
-        if (typeof(IDictionary).IsAssignableFrom(type))
-            return false;
-
         // If it's assignable here, then it can go
         if (typeof(UnityEngine.Object).IsAssignableFrom(type)) return true;
 
         // Exactly what the plugin aims to fix: classes and value types that aren't from the assembly not being serialized
         if (!type.IsStandardCollection())
+        {
+            if (typeof(IEnumerable).IsAssignableFrom(type)) return false; // Other IEnumerable collections are not supported directly by Unity
             return (type.IsClass || type.IsValueType) && type.IsFromGameAssemblies();
+        }
 
         // Assumes it's a standard collection that Unity could serialize
-        var elementTypes = type.GetTypesFromArray();
-        return elementTypes.TrueForAll(CanUnitySerialize); // Are ALL elements something Unity can serialize? If there's any who Unity can't, it needs to be reported!
+        var elementTypes = type.GetTypesFromArray(1); // Check only a single depth
+        return elementTypes[0].CanUnitySerialize(); // Check the single element type
     }
 
     public static bool IsUnityComponentType(this Type type)
@@ -115,16 +110,14 @@ internal static class AssemblyUtils
             layersToCheck = -1;
 
         var typeDepthItem = new TypeDepthItem(collectionType, layersToCheck);
-        bool isCacheAvailable = CollectionNestedElementTypesCache != null;
-        if (isCacheAvailable && CollectionNestedElementTypesCache.NullableTryGetValue(typeDepthItem, out var results)) return results;
+        if (CollectionNestedElementTypesCache.NullableTryGetValue(typeDepthItem, out var results)) return results;
 
         // Initial capacity guess to reduce resizing
         results = [];
         GetTypesFromArrayInternal(collectionType, layersToCheck, 0, results);
 
         // Cache
-        if (isCacheAvailable)
-            CollectionNestedElementTypesCache.NullableAdd(typeDepthItem, results);
+        CollectionNestedElementTypesCache.NullableAdd(typeDepthItem, results);
         return results;
     }
 

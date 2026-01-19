@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace BepInSoft.Core.Models;
+namespace BepInSerializer.Core.Models;
 
 // Will be useful where there's excessive amounts of items to cache
 internal class LRUCache<TKey, TValue>(int maxSize) : IEnumerable<KeyValuePair<TKey, TValue>>

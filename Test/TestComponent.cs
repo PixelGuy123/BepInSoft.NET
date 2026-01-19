@@ -1,14 +1,13 @@
 #if DEBUG
 using System;
 using System.Collections.Generic;
-using BepInSoft;
+using BepInSerializer;
 using UnityEngine;
 
 public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackReceiver
 {
     [Header("Bridge Data")]
-    [SerializeField]
-    private BridgePayload payload;
+    public BridgePayload payload;
     [SerializeField]
     private NonSerializablePayload nonSerializablePayload;
     [SerializeReference]
@@ -101,7 +100,7 @@ public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackRe
         payload.genericStruct = new() { Value = new() { x = 3, y = 4 } };
         payload.valueGenericString = new() { Value = "MyValueToBeSerialized" };
         payload.valueGenericInt = new() { Value = 2 };
-        payload.valueGenericStruct = new() { Value = new() { x = 3, y = 4 } };
+        payload.valueGenericStruct = new() { Value = new() { Value = 24 } };
 
         // 1.3 Nullables
         payload.nullableNumber = null;
@@ -212,7 +211,7 @@ public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackRe
         // // 10. Circular References (Pure C#)
         // A -> B -> A
         var root = new CircularNode { id = 1 };
-        var child = new CircularNode { id = 2 };
+        var child = new SecondaryCircularNode { id = 2 };
         root.next = child;
         child.next = root; // The cycle
         payload.circularRoot = root;
@@ -399,6 +398,13 @@ public struct SimpleStruct
 public class CircularNode
 {
     public int id;
+    public SecondaryCircularNode next; // Reference to another node
+}
+
+[Serializable]
+public class SecondaryCircularNode
+{
+    public int id;
     public CircularNode next; // Reference to another node
 }
 
@@ -435,7 +441,7 @@ public class BridgePayload
     public GenericClass<SimpleStruct> genericStruct;
     public GenericStruct<string> valueGenericString;
     public GenericStruct<int> valueGenericInt;
-    public GenericStruct<SimpleStruct> valueGenericStruct;
+    public GenericStruct<GenericClass<int>> valueGenericStruct;
 
     [Header("Unserialize Support")]
     [NonSerialized]
@@ -498,7 +504,7 @@ public class BridgePayload
     [SerializeReference] public AbstractItem sharedRefB; // Must point to same instance as A]
 
     [Header("Pure C# Circular Reference")]
-    [SerializeReference] public CircularNode circularRoot;
+    public CircularNode circularRoot;
 }
 
 public class ExternalRefComponent : MonoBehaviour

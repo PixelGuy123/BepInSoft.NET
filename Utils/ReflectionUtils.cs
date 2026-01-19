@@ -3,11 +3,11 @@ using System;
 using System.Linq.Expressions;
 using HarmonyLib;
 using System.Collections.Generic;
-using BepInSoft.Core.Models;
+using BepInSerializer.Core.Models;
 using System.Runtime.CompilerServices;
 using System.Linq;
 
-namespace BepInSoft.Utils;
+namespace BepInSerializer.Utils;
 
 internal static class ReflectionUtils
 {
@@ -22,6 +22,7 @@ internal static class ReflectionUtils
     internal static LRUCache<Type, Func<int, Array>> ArrayActivatorConstructorCache;
     internal static LRUCache<Type, Func<object, object>> SelfActivatorConstructorCache;
     internal static LRUCache<Type, List<FieldInfo>> TypeToFieldsInfoCache;
+    internal static LRUCache<Type, Dictionary<string, FieldInfo>> FieldInfoCache;
 
     public static Func<object, object> CreateFieldGetter(this FieldInfo fieldInfo)
     {
@@ -67,16 +68,46 @@ internal static class ReflectionUtils
         return lambda;
     }
 
-    public static List<FieldInfo> GetFieldsInfo(this Type type)
+    public static List<FieldInfo> GetSerializableFieldInfos(this Type type, bool acceptUnityTypes = false)
     {
         // If no cache, do expensive part
         if (TypeToFieldsInfoCache == null)
             return AccessTools.GetDeclaredFields(type);
 
-        if (TypeToFieldsInfoCache.TryGetValue(type, out var fieldsInfo)) return fieldsInfo;
-        fieldsInfo = AccessTools.GetDeclaredFields(type);
-        TypeToFieldsInfoCache.Add(type, fieldsInfo);
-        return fieldsInfo;
+        if (TypeToFieldsInfoCache.TryGetValue(type, out var fields)) return fields;
+        // Cache fields for this specific type call
+        fields = AccessTools.GetDeclaredFields(type);
+        bool isDebugEnabled = BridgeManager.enableDebugLogs.Value;
+
+        // Filter out the fields that cannot be serialized
+        for (int i = fields.Count - 1; i >= 0; i--)
+        {
+            var field = fields[i];
+
+            // Static is irrelevant
+            if (field.IsStatic)
+            {
+                fields.RemoveAt(i);
+                continue;
+            }
+
+            Type fieldType = field.FieldType;
+            bool isDeclaringTypeAComponent = acceptUnityTypes || type.IsUnityComponentType(); // If the declaring type is a component, Unity serialization rules apply
+
+            // Apply Serialization implementation (private fields can't be serialized, like in Unity)
+            if (!field.DoesFieldPassUnityValidationRules() || (isDeclaringTypeAComponent && fieldType.CanUnitySerialize()))
+            {
+                // Skip if it's a primitive or if it isn't root
+                if (isDebugEnabled)
+                {
+                    BridgeManager.logger.LogInfo($"{field.Name} SKIPPED.");
+                }
+                fields.RemoveAt(i);
+            }
+        }
+
+        TypeToFieldsInfoCache.Add(type, fields);
+        return fields;
     }
 
     // There are some Unity components that have their own constructor for duplication (new Material(Material))
@@ -236,7 +267,12 @@ internal static class ReflectionUtils
     public static Func<object> GetParameterlessConstructor(this Type type)
     {
         if (ParameterlessActivatorConstructorCache.NullableTryGetValue(type, out var func)) return func;
-        var parameterlessConstructor = type.GetConstructor(Type.EmptyTypes) ?? throw new InvalidCastException($"{type} does not contain a parameterless constructor.");
+        var parameterlessConstructor = type.GetConstructor(Type.EmptyTypes) ?? null;
+        if (parameterlessConstructor == null)
+        {
+            ParameterlessActivatorConstructorCache.NullableAdd(type, null);
+            return null;
+        }
 
         // Create the Expression: () => new Type()
         NewExpression newExp = Expression.New(parameterlessConstructor);
@@ -265,8 +301,16 @@ internal static class ReflectionUtils
         return compType;
     }
 
-    public static bool IsFieldABackingField(this FieldInfo field) => field.IsDefined(typeof(CompilerGeneratedAttribute), false) || field.Name.Contains("k__BackingField");
-    public static bool IsFieldABackingField(this MemberInfo info) =>
-        info is FieldInfo field && field.IsFieldABackingField();
+    public static FieldInfo GetFastField(this Type compType, string fieldName)
+    {
+        if (FieldInfoCache == null) return AccessTools.Field(compType, fieldName);
 
+        var fields = FieldInfoCache.GetValue(compType, t => []);
+        if (!fields.TryGetValue(fieldName, out var field))
+        {
+            field = AccessTools.Field(compType, fieldName);
+            fields[fieldName] = field;
+        }
+        return field;
+    }
 }

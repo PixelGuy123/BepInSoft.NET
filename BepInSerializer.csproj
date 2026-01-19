@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>BepInSerializer</AssemblyName>
+    <Description>A library to make an easy bridge between other plugins and Unity's serialization system.</Description>
+    <Version>1.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="1.*" />
+    <PackageReference Include="UnityEngine.Modules" Version="2020.3.38" />
+	  <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
+  </ItemGroup>
+  
+  
+  <Target Name="PostBuild" AfterTargets="Publish">
+    <Message Text="Executing CopyDLLs task" Importance="High" />
+    <Copy SourceFiles="$(PublishDir)$(AssemblyName).dll;$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).xml" DestinationFolder="/home/pixeldesktop/.steam/steam/steamapps/common/Baldi's Basics Plus/BepInEx/plugins" />
+    <Message Text="Copied build files" Importance="High" />
+  </Target>
+</Project>

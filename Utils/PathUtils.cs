@@ -1,7 +1,7 @@
 using System.IO;
 using System.Reflection;
 
-namespace BepInSoft.Utils;
+namespace BepInSerializer.Utils;
 
 internal static class PathUtils
 {

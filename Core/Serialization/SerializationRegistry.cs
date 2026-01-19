@@ -2,18 +2,20 @@ using System.Collections.Generic;
 using System;
 using HarmonyLib;
 using UnityEngine;
-using BepInSoft.Utils;
-using BepInSoft.Core.Models;
+using BepInSerializer.Utils;
+using BepInSerializer.Core.Models;
+using System.Reflection;
 
-namespace BepInSoft.Core.Serialization;
+namespace BepInSerializer.Core.Serialization;
 
 internal static class SerializationRegistry
 {
     // Weak table uses WeakReferences; if one key from Type is nulled out, this cache will release it too
     // The StrongBox is just to hold the boolean (struct) into a reference type wrapper (object)
     internal static LRUCache<Type, bool> _cachedRootTypes;
-    internal readonly static List<BridgeTarget> RegisteredTargets = [];
+    internal readonly static Dictionary<Type, List<FieldInfo>> ComponentFieldMap = [];
 
+    // ------ Public API ------
     public static bool Register(Component component)
     {
         var componentType = component.GetType();
@@ -76,53 +78,26 @@ internal static class SerializationRegistry
     }
 
 
+    // ---- Private Logic ----
     private static bool ScanComponent(Type rootComponentType)
     {
         // Cache fields for this specific type call
-        var fields = AccessTools.GetDeclaredFields(rootComponentType);
+        var fields = rootComponentType.GetSerializableFieldInfos();
         bool isDebugEnabled = BridgeManager.enableDebugLogs.Value;
-        bool modifiedField = false;
+        bool modifiedField = fields.Count != 0;
 
         for (int i = 0; i < fields.Count; i++)
         {
             var field = fields[i];
+            // Register Target
+            if (ComponentFieldMap.TryGetValue(rootComponentType, out var infos))
+                infos.Add(field);
+            else
+                ComponentFieldMap[rootComponentType] = [field];
 
-            // Static is irrelevant
-            if (field.IsStatic) continue;
-
-            Type fieldType = field.FieldType;
-
-            // Apply Serialization implementation (private fields can't be serialized, like in Unity)
-            if (fieldType.CanUnitySerialize())
+            if (isDebugEnabled)
             {
-                // Skip if it's a primitive or if it isn't root
-                if (isDebugEnabled)
-                {
-                    BridgeManager.logger.LogInfo($"{field.Name} SKIPPED.");
-                }
-                continue;
-            }
-
-            // Skip any private fields that aren't marked as SerializeField
-            if (!field.IsPublic && !field.IsDefined(typeof(SerializeField), false))
-                continue;
-
-            // Check Serializable Attribute
-            if (fieldType.IsSerializable ||
-            field.IsDefined(typeof(SerializeReference), false)) // Check specifically for SerializeReference, as apparently Unity ignores this serializable property for these fields
-            {
-                // Register Target
-                RegisteredTargets.Add(new BridgeTarget
-                {
-                    ComponentType = rootComponentType,
-                    Field = field
-                });
-
-                if (isDebugEnabled)
-                {
-                    BridgeManager.logger.LogInfo($"Registered: {field.DeclaringType.Name}.{field.Name} -> {fieldType.Name}");
-                }
-                modifiedField = true;
+                BridgeManager.logger.LogInfo($"Registered: {field.DeclaringType.Name}.{field.Name} -> {field.FieldType}");
             }
         }
 

@@ -7,7 +7,7 @@ static class ChangeTestComponentStructure
         if (!__instance.initializeOnAwake)
         {
             __instance.gameObject.AddComponent<ExternalRefComponent>();
-            BepInSoft.BridgeManager.logger.LogInfo("Aggressive patch called!");
+            BepInSerializer.BridgeManager.logger.LogInfo("Aggressive patch called!");
         }
     }
 }

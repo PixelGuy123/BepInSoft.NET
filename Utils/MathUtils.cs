@@ -1,6 +1,6 @@
 using System;
 
-namespace BepInSoft.Utils;
+namespace BepInSerializer.Utils;
 
 internal static class MathUtils
 {
