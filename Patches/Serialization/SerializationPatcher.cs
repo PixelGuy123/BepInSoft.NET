@@ -1,14 +1,15 @@
-using System;
-using System.Collections.Generic;
-using System.Reflection;
-using System.Linq;
-using HarmonyLib;
-using UnityEngine;
+using BepInSerializer.Core.Models;
 using BepInSerializer.Core.Serialization;
 using BepInSerializer.Core.Serialization.Interfaces;
 using BepInSerializer.Utils;
+using HarmonyLib;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using UnityEngine;
+
 using Object = UnityEngine.Object;
-using BepInSerializer.Core.Models;
 
 namespace BepInSerializer.Patches.Serialization;
 
@@ -23,15 +24,16 @@ internal static partial class SerializationPatcher
     static IEnumerable<MethodInfo> GetInstantiationMethods()
     {
         return AccessTools.GetDeclaredMethods(typeof(Object))
-            .Where(m => m.Name == nameof(Object.Instantiate))
-            .Select(m => m.IsGenericMethodDefinition ? m.MakeGenericMethod(typeof(Object)) : m);
+            .Where(m => m.Name == nameof(Object.Internal_CloneSingle) || m.Name == nameof(Object.Internal_CloneSingleWithParent));
+        //.Select(m => m.IsGenericMethodDefinition ? m.MakeGenericMethod(typeof(Object)) : m);
     }
     #region Pre Instantiation
     [HarmonyPrefix]
     [HarmonyWrapSafe]
     [HarmonyPriority(Priority.Last)] // Runs after any other instantiation patch, to guarantee it gets whatever others changed
-    static void Prefix_Instantiate(Object original, out ObjectActivity __state)
+    static void Prefix_Instantiate(Object __0, out ObjectActivity __state)
     {
+        Object original = __0;
         bool debug = BridgeManager.enableDebugLogs.Value;
         if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Started for object {original?.GetType()} '{original?.name}'");
 
@@ -56,22 +58,23 @@ internal static partial class SerializationPatcher
         var context = __state.Context;
         context.OriginalRoot = rootGo;
 
-        // Put rootGo to sleep
-        rootGo.SetActive(false);
 
         if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Processing root GameObject '{rootGo.name}' (Active: {rootGo.activeSelf})");
 
         // Scan & Capture Source Hierarchy
         var transforms = GetGOHierarchy(rootGo);
-        if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Found {transforms.Length} transforms in hierarchy");
+        if (debug)
+            BridgeManager.logger.LogInfo($"Prefix_Instantiate: Found {transforms.Length} transforms in hierarchy");
 
         foreach (var t in transforms)
         {
             uint pathHash = GetRelativePathHash(rootGo.transform, t);
             var componentsBuffer = context.ComponentsRetrievalBuffer;
+            componentsBuffer.Clear();
             t.GetComponents(componentsBuffer);
 
-            if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Transform '{t.name}' at path '{pathHash}' has {componentsBuffer.Count} components");
+            if (debug)
+                BridgeManager.logger.LogInfo($"Prefix_Instantiate: Transform '{t.name}' at path '{pathHash}' has {componentsBuffer.Count} components");
 
             foreach (var comp in componentsBuffer)
             {
@@ -95,8 +98,30 @@ internal static partial class SerializationPatcher
                 // Call beforehand the OnBeforeSerialize to capture the cleaned state
                 if (comp is ISafeSerializationCallbackReceiver receiver)
                 {
-                    if (debug) BridgeManager.logger.LogInfo($"[{comp}] Manual OnBeforeSerialize");
+                    if (debug)
+                        BridgeManager.logger.LogInfo($"[{comp}] Manual OnBeforeSerialize");
                     receiver.OnBeforeSerialize();
+                }
+                // Fall back into the blockage field approach, if there's one to begin with
+                else if (comp is ISerializationCallbackReceiver unityReceiver)
+                {
+                    var blockageField = SerializationRegistry.TryGetReceiverBlockageField(type);
+                    if (blockageField != null)
+                    {
+                        // Create the setter
+                        var setField = blockageField.CreateFieldSetter();
+
+                        // Set to false before triggering the BeforeSerialize
+                        setField(comp, false);
+
+                        // Call the receiver's method
+                        if (debug)
+                            BridgeManager.logger.LogInfo($"[{comp} ({comp.GetInstanceID()})] Manual OnBeforeSerialize (Blockage approach)");
+                        unityReceiver.OnBeforeSerialize();
+
+                        // Block the call after calling it
+                        setField(comp, true);
+                    }
                 }
 
                 // Capture Data (regardless if it has data or not, it still needs to be mapped)
@@ -105,20 +130,25 @@ internal static partial class SerializationPatcher
                 {
                     list = [];
                     context.SnapshotData[pathHash] = list;
-                    if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Created new state list for path '{pathHash}'");
+                    if (debug)
+                        BridgeManager.logger.LogInfo($"Prefix_Instantiate: Created new state list for path '{pathHash}'");
                 }
                 list.Add(state);
                 if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Captured state for {type}.");
             }
         }
+        // Put rootGo to sleep
+        rootGo.SetActive(false);
+        if (debug) BridgeManager.logger.LogInfo($"Prefix_Instantiate: Finished prefix for {rootGo}");
     }
     #endregion
     #region Post Instantiation
     [HarmonyWrapSafe]
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
-    static void Postfix_Instantiate(Object original, object __result, ref ObjectActivity __state)
+    static void Postfix_Instantiate(Object __0, object __result, ref ObjectActivity __state)
     {
+        Object original = __0;
         bool debug = BridgeManager.enableDebugLogs.Value;
         if (__state == default)
         {
@@ -173,14 +203,19 @@ internal static partial class SerializationPatcher
             // Skip if source didn't have this node or any serialized data for it
             bool stateListAvailable = context.SnapshotData.TryGetValue(pathHash, out var stateList);
 
-            if (debug && stateListAvailable) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Found snapshot data for path '{pathHash}' with {stateList.Count} states");
+            if (debug)
+            {
+                if (stateListAvailable)
+                    BridgeManager.logger.LogInfo($"Postfix_Instantiate: Found snapshot data for path '{pathHash}' with {stateList.Count} states");
+            }
 
             // Get the components from the cloned object
             var componentsBuffer = context.ComponentsRetrievalBuffer;
             componentsBuffer.Clear();
             targetTrans.GetComponents(componentsBuffer);
 
-            if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Transform '{targetTrans.name}' has {componentsBuffer.Count} components");
+            if (debug)
+                BridgeManager.logger.LogInfo($"Postfix_Instantiate: Transform '{targetTrans.name}' has {componentsBuffer.Count} components");
 
             // Use the map to account with duplicates in the body
             var typeProgressMap = context.TypeProgressMap;
@@ -248,22 +283,21 @@ internal static partial class SerializationPatcher
         if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Restoring {componentsStateBuffer.Count} component states");
 
         // Restore all the states after remapping everything
-        for (int i = 0; i < componentsStateBuffer.Count; i++)
+        foreach (var entry in componentsStateBuffer)
         {
-            var entry = componentsStateBuffer[i];
             if (!entry.HasStateDefined) continue; // Only go through defined states
 
-            if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Restoring state for {entry.State.ComponentType}");
+            if (debug)
+                BridgeManager.logger.LogInfo($"Postfix_Instantiate: Restoring state for {entry.State.Component}");
             ComponentSerializer.RestoreState(entry.Component, entry.State);
         }
 
-        if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Cleaning up context before waking components");
 
         // Manually Wake Components (Restoring Lifecycle)
-        if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Waking {componentsStateBuffer.Count} components");
-        for (int i = 0; i < componentsStateBuffer.Count; i++)
+        if (debug)
+            BridgeManager.logger.LogInfo($"Postfix_Instantiate: Waking {componentsStateBuffer.Count} components");
+        foreach (var entry in componentsStateBuffer)
         {
-            var entry = componentsStateBuffer[i];
             Type t = entry.Component.GetType();
 
             // No Unity Assembly should be affected
@@ -275,18 +309,42 @@ internal static partial class SerializationPatcher
             // ISafeSerializationCallbackReceiver.OnAfterDeserialize
             if (component is ISafeSerializationCallbackReceiver receiver)
             {
-                if (debug) BridgeManager.logger.LogInfo($"[{component}] Manual OnAfterDeserialize");
+                if (debug)
+                    BridgeManager.logger.LogInfo($"[{component}] Manual OnAfterDeserialize");
                 receiver.OnAfterDeserialize();
+            }
+            // Fallback to the blockage approach if there's one
+            else if (component is ISerializationCallbackReceiver unityReceiver)
+            {
+                var blockageField = SerializationRegistry.TryGetReceiverBlockageField(t);
+                if (blockageField != null)
+                {
+                    var setField = blockageField.CreateFieldSetter();
+
+                    // Try to disable the block flag
+                    setField(component, false);
+
+                    if (debug)
+                        BridgeManager.logger.LogInfo($"[{component} ({component.GetInstanceID()})] Manual OnAfterDeserialize (Blockage Approach)");
+                    // Then, call the deserialize method
+                    unityReceiver.OnAfterDeserialize();
+
+                    // Then, block it again for the future
+                    setField(component, true);
+                }
             }
 
             // Awake & OnEnable
             if (component is Behaviour b && __state.ActiveInHierarchy)
             {
-                invoker = DelegateProvider.GetMethodInvoker(t, DelegateMethod.Awake);
-                if (invoker != null)
+                if (component.gameObject != resultGo)
                 {
-                    if (debug) BridgeManager.logger.LogInfo($"[{component}] Manual Awake");
-                    invoker(component);
+                    invoker = DelegateProvider.GetMethodInvoker(t, DelegateMethod.Awake);
+                    if (invoker != null)
+                    {
+                        if (debug) BridgeManager.logger.LogInfo($"[{component}] Manual Awake");
+                        invoker(component);
+                    }
                 }
 
                 // Since resultGo below will be set active, we don't need to call it here twice
@@ -303,13 +361,13 @@ internal static partial class SerializationPatcher
             }
         }
 
+        // Reset back the SetActive state again
+        if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Activating object states.");
+        rootGo.SetActive(__state.ActiveSelf);
+        resultGo.SetActive(__state.ActiveSelf);
         ComponentSerializer.ClearReferences();
         InstantiateContextPool.ReturnContext(context);
         if (debug) BridgeManager.logger.LogInfo($"Postfix_Instantiate: Completed successfully for '{resultGo.name}'");
-
-        // Reset back the SetActive state again
-        rootGo.SetActive(__state.ActiveSelf);
-        resultGo.SetActive(__state.ActiveSelf);
     }
     #endregion
 
@@ -336,7 +394,7 @@ internal static partial class SerializationPatcher
             // _pathBuffer.Add((uint)current.GetSiblingIndex());
             unchecked // Allows integer overflow, which is fine for hashing
             {
-                hash = (hash * 31) ^ (uint)current.GetSiblingIndex(); // Basic hashing algorithm
+                hash = (hash * 31) ^ (uint)(current.GetSiblingIndex() + 1); // Basic hashing algorithm
             }
             current = current.parent;
         }

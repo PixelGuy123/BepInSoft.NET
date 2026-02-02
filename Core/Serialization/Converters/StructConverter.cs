@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using BepInSerializer.Core.Serialization.Converters.Models;
 
 namespace BepInSerializer.Core.Serialization.Converters;
@@ -31,9 +32,9 @@ internal class StructConverter : FieldConverter
             ManageFieldsFromType(context, newConvert.GetType(), (newContext, setFieldValue) =>
             {
                 // Create new context for the field
-                setFieldValue(newConvert, ReConvert(newContext));
+                // Important: set again the newConvert, to update the struct value here
+                newConvert = setFieldValue(newConvert, ReConvert(newContext));
             });
-
             return newConvert;
         }
 

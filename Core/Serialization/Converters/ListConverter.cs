@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using BepInSerializer.Core.Serialization.Converters.Models;
@@ -21,14 +22,20 @@ internal class ListConverter : FieldConverter
     public override object Convert(FieldContext context)
     {
         if (context.OriginalValue is not IList originalList) return null;
+
+        // Generic argument from List<T>
+        var genericType = context.ValueType.GetGenericArguments()[0];
+
+        // If the array is not allowed to be populated, return null
+        if (!context.ContainsAllowCollectionNesting && !CanListBeRecursivelyPopulated(genericType))
+            return null;
+
         // Make a new list (object)
         if (TryConstructNewObject(context, out var newObject))
         {
             // Failsafe to be an actual list
             if (newObject is not IList newList) return null;
 
-            // Generic argument from List<T>
-            var genericType = context.ValueType.GetGenericArguments()[0];
 
             // Copy the original items to this new list, by using ReConvert
             for (int i = 0; i < originalList.Count; i++)
@@ -42,4 +49,8 @@ internal class ListConverter : FieldConverter
         // If no list has been given, return null
         return null;
     }
+
+    // Whether it can be converted or not based on elementType
+    protected virtual bool CanListBeRecursivelyPopulated(Type elementType) =>
+        elementType == typeof(string) || !typeof(IEnumerable).IsAssignableFrom(elementType); // If the type is not an IEnumerable (except strings), continue
 }

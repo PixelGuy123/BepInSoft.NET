@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Reflection;
+using BepInSerializer.Core.Serialization.Attributes;
 using BepInSerializer.Utils;
 using UnityEngine;
 
@@ -20,15 +23,22 @@ public partial class FieldContext
     /// <exception cref="ArgumentNullException"></exception>
     public static FieldContext CreateSubContext(FieldContext originalContext, FieldInfo fieldInfo)
     {
-        if (originalContext == null) throw new ArgumentNullException(nameof(originalContext));
-        return new FieldContext
+        // Construct this context
+        var context = new FieldContext
         {
-            OriginalContext = originalContext,
-            ValueType = fieldInfo.FieldType,
+            OriginalContext = originalContext ?? throw new ArgumentNullException(nameof(originalContext)),
             OriginalValue = fieldInfo.CreateFieldGetter()(originalContext.OriginalValue),
+            ValueType = fieldInfo.FieldType,
             ContainsSerializeReference = fieldInfo.IsDefined(typeof(SerializeReference)),
-            CircularDependencyDetector = originalContext.CircularDependencyDetector
+            ContainsAllowCollectionNesting = fieldInfo.IsDefined(typeof(AllowCollectionNesting)),
+            CircularDependencyDetector = originalContext.CircularDependencyDetector,
+            PreAvailableConverters = originalContext.PreAvailableConverters
         };
+
+        // Reference back the previous collection, and add the new Converters if there are any
+        foreach (var Converter in fieldInfo.GetCustomAttributes<UseConverter>()) context.PreAvailableConverters.Add(Converter.ConverterInstance);
+
+        return context;
     }
     /// <summary>
     /// Creates a new instance of the <see cref="FieldContext"/> class for a property.
@@ -42,16 +52,23 @@ public partial class FieldContext
     public static FieldContext CreateSubContext(FieldContext originalContext, PropertyInfo propInfo)
     {
         if (originalContext == null) throw new ArgumentNullException(nameof(originalContext));
+
+        // Get data
         var getter = propInfo.CreatePropertyGetter() ?? throw new ArgumentException("Property must have a getter method.", nameof(propInfo));
         var originalValue = getter(originalContext.OriginalValue);
-        return new FieldContext
+
+        // Construct context
+        var context = new FieldContext
         {
             OriginalContext = originalContext,
             ValueType = originalValue.GetType(),
             OriginalValue = originalValue,
+            PreAvailableConverters = originalContext.PreAvailableConverters,
             ContainsSerializeReference = propInfo.IsDefined(typeof(SerializeReference)),
+            ContainsAllowCollectionNesting = propInfo.IsDefined(typeof(AllowCollectionNesting)),
             CircularDependencyDetector = originalContext.CircularDependencyDetector
         };
+        return context;
     }
     /// <summary>
     /// Creates a new instance of the <see cref="FieldContext"/> class for a remote value.
@@ -64,15 +81,16 @@ public partial class FieldContext
     /// <remarks>This is useful for creating contexts for values that are not directly tied to a specific field, such as elements within a collection.</remarks>
     public static FieldContext CreateRemoteContext(FieldContext originalContext, object originalValue, Type originalType = null)
     {
-        if (originalContext == null) throw new ArgumentNullException(nameof(originalContext));
-        return new FieldContext
+        var context = new FieldContext
         {
-            OriginalContext = originalContext,
+            OriginalContext = originalContext ?? throw new ArgumentNullException(nameof(originalContext)),
             ValueType = originalValue?.GetType() ?? originalType,
             OriginalValue = originalValue,
             ContainsSerializeReference = originalContext.ContainsSerializeReference,
+            ContainsAllowCollectionNesting = originalContext.ContainsAllowCollectionNesting,
             CircularDependencyDetector = originalContext.CircularDependencyDetector
         };
+        return context;
     }
 
     /// <summary>
@@ -112,6 +130,11 @@ public partial class FieldContext
     /// Indicates whether the field has the <see cref="SerializeReference"/> attribute.
     /// </summary>
     public bool ContainsSerializeReference { get; private set; }
+    /// <summary>
+    /// Indicates whether the field has the <see cref="AllowCollectionNesting"/> attribute.
+    /// </summary>
+    /// <remarks>Useful for converters who work with collections.</remarks>
+    public bool ContainsAllowCollectionNesting { get; private set; }
 
     // ----- Internal API ------
     /// <summary>
@@ -122,13 +145,21 @@ public partial class FieldContext
     /// <returns>Returns a context with a field and its original value.</returns>
     internal static FieldContext CreatePrimaryContext(FieldInfo fieldInfo, object originalValue)
     {
-        return new FieldContext
+        // Get, beforehand, the Converters to be prioritized first
+        List<FieldConverter> Converters = [];
+        foreach (var Converter in fieldInfo.GetCustomAttributes<UseConverter>()) Converters.Add(Converter.ConverterInstance);
+
+        // Then, return the context
+        var context = new FieldContext
         {
             ValueType = fieldInfo.FieldType,
             OriginalValue = originalValue,
             ContainsSerializeReference = fieldInfo.IsDefined(typeof(SerializeReference)),
-            CircularDependencyDetector = new CircularDependencyDetector()
+            ContainsAllowCollectionNesting = fieldInfo.IsDefined(typeof(AllowCollectionNesting)),
+            CircularDependencyDetector = new(),
+            PreAvailableConverters = Converters
         };
+        return context;
     }
 
     /// <summary>
@@ -139,6 +170,10 @@ public partial class FieldContext
     /// The original context used before any conversions were applied.
     /// </summary>
     internal FieldContext OriginalContext { get; private set; }
+    /// <summary>
+    /// A list of Converters with the highest priority to be used by the registry beforehand.
+    /// </summary>
+    internal List<FieldConverter> PreAvailableConverters { get; private set; } = new(16);
 
     // ----- Private API -----
     private FieldContext() { } // Only accessible through static constructors

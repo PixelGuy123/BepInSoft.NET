@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace BepInSerializer.Core.Serialization.Converters.Models;
 
-internal class CircularDependencyDetector
+internal class CircularDependencyDetector()
 {
     private readonly HashSet<object> _detectedObjects = [];
     private readonly HashSet<Type> _detectedTypes = [];

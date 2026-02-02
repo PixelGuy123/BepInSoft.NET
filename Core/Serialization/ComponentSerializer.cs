@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 using BepInSerializer.Utils;
 using BepInSerializer.Core.Models;
@@ -92,7 +91,10 @@ internal static class ComponentSerializer
                 FieldContext.CreatePrimaryContext(
                     fieldInfo,
                     data.FieldValue)); // Gets the parent of this component to serve as reference to the original field values
-            fieldInfo.CreateFieldSetter()(target, valueToSet);
+
+            // If the value is null, do NOT set it to null; leave the default constructor of the component do the job
+            if (valueToSet != null)
+                fieldInfo.CreateFieldSetter()(target, valueToSet);
         }
         catch (Exception ex)
         {

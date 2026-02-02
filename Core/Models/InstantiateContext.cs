@@ -12,9 +12,9 @@ internal class InstantiateContext
 {
     public GameObject OriginalRoot;
     // Map: RelativePath (hash) -> List of Component States (ordered by occurrence)
-    public readonly Dictionary<uint, List<ComponentSerializationState>> SnapshotData = [];
-    public readonly Dictionary<Type, int> TypeProgressMap = [];
-    public readonly List<ComponentStatePair> ComponentStateBuffer = new(64);
+    public readonly Dictionary<uint, List<ComponentSerializationState>> SnapshotData = new(16);
+    public readonly Dictionary<Type, int> TypeProgressMap = new(8);
+    public readonly List<ComponentStatePair> ComponentStateBuffer = new(16);
     public readonly List<Component> ComponentsRetrievalBuffer = new(16); // Buffer for GetComponents
 }
 
@@ -34,6 +34,7 @@ internal static class InstantiateContextPool
         context.ComponentsRetrievalBuffer.Clear();
         context.ComponentStateBuffer.Clear();
         context.SnapshotData.Clear();
+
         context.OriginalRoot = null;
 
         // Add again to the bag

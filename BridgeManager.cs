@@ -1,14 +1,16 @@
 ﻿using BepInEx;
 using BepInEx.Configuration;
-using HarmonyLib;
-using BepInSerializer.Core;
-using UnityEngine.SceneManagement;
-using BepInSerializer.Utils;
-using System.Reflection;
-using UnityEngine;
 using BepInEx.Logging;
+using BepInSerializer.Core;
 using BepInSerializer.Patches.Serialization;
+using BepInSerializer.Utils;
+using HarmonyLib;
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
+using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace BepInSerializer;
 
@@ -83,8 +85,8 @@ internal class BridgeManager : BaseUnityPlugin
 
 	private void ApplyHarmonyPatches()
 	{
-		var h = new Harmony(GUID);
-		h.PatchAll();
+		var harmony = new Harmony(GUID);
+		harmony.PatchAll();
 	}
 
 	private void SetupDebugConfigurations()
@@ -116,22 +118,23 @@ internal class BridgeManager : BaseUnityPlugin
 		Logger.LogInfo("Calculating estimated size for LRUCache<Type, ...> collections...");
 		SceneManager.sceneLoaded -= OnSceneLoadedForCacheEstimation;
 
-		long typeSize = CalculateTypeSize();
-		sizeForTypesReflectionCache.Value = (int)System.Math.Max(100, System.Math.Floor(MathUtils.CalculateCurve(typeSize, 238)));
+		uint typeSize = CalculateTypeSize();
+		sizeForTypesReflectionCache.Value = (int)Math.Max(100, Math.Floor(MathUtils.CalculateCurve(typeSize, 238)));
 		Logger.LogInfo($"Based on {typeSize} types detected, the LRUCache collections' estimated size is {sizeForTypesReflectionCache.Value}.");
 
 		LRUCacheInitializer.InitializeCacheValues();
 	}
 
-	private long CalculateTypeSize()
+	private uint CalculateTypeSize()
 	{
 		Assembly myAssembly = typeof(BridgeManager).Assembly;
-		long typeSize = 0;
+		uint typeSize = 0;
 
 		foreach (var assembly in AccessTools.AllAssemblies())
 		{
 			if (assembly.IsGameAssembly() || assembly == myAssembly) continue;
-			typeSize += AccessTools.GetTypesFromAssembly(assembly).Length;
+			var types = AccessTools.GetTypesFromAssembly(assembly);
+			typeSize += (uint)types.Length;
 		}
 
 		return typeSize;
@@ -141,6 +144,7 @@ internal class BridgeManager : BaseUnityPlugin
 	private void SetupDebugMode()
 	{
 		StartCoroutine(BridgeManagerDebugger.WaitForGameplayRoutine("MainMenu"));
+		StartCoroutine(BridgeManagerDebugger.WaitForGameplayRoutine("Level"));
 	}
 #endif
 }

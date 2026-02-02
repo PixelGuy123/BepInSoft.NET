@@ -59,7 +59,7 @@ internal class ClassConverter : FieldConverter
                 using (fieldScope)
                 {
                     // Create new context for the field
-                    setValue(newConvert, ReConvert(newContext));
+                    newConvert = setValue(newConvert, ReConvert(newContext));
                 }
             });
             return newConvert;

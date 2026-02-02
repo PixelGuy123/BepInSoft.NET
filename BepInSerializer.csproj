@@ -19,10 +19,14 @@
 	  <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
   </ItemGroup>
   
+  <!-- Post Build (Optional) -->
   
   <Target Name="PostBuild" AfterTargets="Publish">
     <Message Text="Executing CopyDLLs task" Importance="High" />
     <Copy SourceFiles="$(PublishDir)$(AssemblyName).dll;$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).xml" DestinationFolder="/home/pixeldesktop/.steam/steam/steamapps/common/Baldi's Basics Plus/BepInEx/plugins" />
+    <Copy SourceFiles="$(PublishDir)$(AssemblyName).dll;$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).xml" DestinationFolder="/home/pixeldesktop/Apps/taldi_103_imgoinginsane/BepInEx/plugins" />
+    <Copy SourceFiles="$(PublishDir)$(AssemblyName).dll;$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).xml" DestinationFolder="/home/pixeldesktop/Apps/BEER GAME V0.10.3 LINUX/BepInEx/plugins" />
     <Message Text="Copied build files" Importance="High" />
   </Target>
+ 
 </Project>

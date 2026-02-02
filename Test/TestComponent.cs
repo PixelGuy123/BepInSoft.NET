@@ -3,6 +3,8 @@ using System;
 using System.Collections.Generic;
 using BepInSerializer;
 using UnityEngine;
+using BepInSerializer.Core.Serialization.Attributes;
+using BepInSerializer.Core.Serialization.Converters;
 
 public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackReceiver
 {
@@ -12,15 +14,22 @@ public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackRe
     private NonSerializablePayload nonSerializablePayload;
     [SerializeReference]
     private NonSerializablePayload refNonSerializablePayload;
+    [SerializeField]
+    protected string[] testStringArray;
+    private List<string[]> testStringPair;
 
     [Header("Debug")]
     public bool initializeOnAwake = true;
     public bool useChildObjectInsteadOfSelf = true;
 
     [Header("Dictionaries")]
+    [UseConverter(typeof(DictionaryConverter))]
     public Dictionary<string, ExternalRefComponent> identifiedExternalsPairs;
     [SerializeField]
     private List<ExternalRefComponent> privateIdentificationsPairs;
+
+    [SerializeField]
+    private bool __BepInSerializer_BlockSerializationCallbackAction;
 
     private void Awake()
     {
@@ -41,12 +50,19 @@ public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackRe
 
     public void OnBeforeSerialize()
     {
-        // BridgeManager.logger.LogInfo("----------- ONBEFORESERIALIZE CALLED!! --------------");
+        if (__BepInSerializer_BlockSerializationCallbackAction) return;
+        BridgeManager.logger.LogInfo("----------- ONBEFORESERIALIZE CALLED!! --------------");
+        testStringArray = new string[1];
+        testStringArray[0] = testStringPair[0][0];
     }
 
     public void OnAfterDeserialize()
     {
-        // BridgeManager.logger.LogInfo("----------- ONAFTERDESERIALIZE CALLED!! --------------");
+        if (__BepInSerializer_BlockSerializationCallbackAction) return;
+        BridgeManager.logger.LogInfo("----------- ONAFTERDESERIALIZE CALLED!! --------------");
+        BridgeManager.logger.LogInfo($"testStringArray: {testStringArray}");
+        testStringPair = [testStringArray];
+        testStringArray = null;
     }
 
     // Context menu allows you to trigger this in Editor to verify serialization
@@ -54,6 +70,7 @@ public class SerializationBridgeTester : MonoBehaviour, ISerializationCallbackRe
     [ContextMenu("Initialize Full Test Data")]
     public void InitializeFullTestData()
     {
+        testStringPair = [["Test"]];
         nonSerializablePayload = new() { someField = 213 };
         refNonSerializablePayload = new() { someField = 213 };
         // Setup External Reference (Ensure component exists)
@@ -427,11 +444,16 @@ public class BridgePayload
     public SimpleStruct simpleStruct;
 
     [Header("Multi-dimensional Arrays")]
+    [AllowCollectionNesting]
     public int[][][] threeJaggedArray;
+    [AllowCollectionNesting]
     public int[][] twoDimensionalArray;
+    [AllowCollectionNesting]
     public List<string>[] multiListArray;
     public List<int[][]> multiListMultiArray;
+    [AllowCollectionNesting]
     public List<GameObject[]>[] listOfGameObjectArrayArray;
+    [AllowCollectionNesting]
     public GameObject[][] twoDGameObjectArray;
 
 
@@ -457,9 +479,14 @@ public class BridgePayload
 
     [Header("Dictionaries")]
     public Dictionary<string, int> stringNumPairs;
+    [UseConverter(typeof(DictionaryConverter))]
     public Dictionary<UnityEngine.Object, int> objectNumPairs;
-    public Dictionary<UnityEngine.Object, UnityEngine.Vector3> objectUnityPairs;
+    [UseConverter(typeof(DictionaryConverter))]
+    public Dictionary<UnityEngine.Object, Vector3> objectUnityPairs;
+    [UseConverter(typeof(DictionaryConverter))]
     public Dictionary<List<string>, List<int>> nestedStringNumPairs;
+    [AllowCollectionNesting]
+    [UseConverter(typeof(DictionaryConverter))]
     public Dictionary<List<GenericStruct<SimpleStruct>>, List<SimpleStruct>> nestedStructsPairs;
 
 
@@ -493,6 +520,7 @@ public class BridgePayload
 
     [Header("Nested Collections Wrapper")]
     [SerializeReference] public List<List<UnityEngine.Object>> nestedListReferences;
+    [AllowCollectionNesting]
     public List<List<List<AbstractItem>>> abstractThreeDimensionalItem;
 
     [Header("Polymorphism ([SerializeReference])")]
@@ -510,5 +538,31 @@ public class BridgePayload
 public class ExternalRefComponent : MonoBehaviour
 {
     public string verifyIdentity = "I am the external component";
+}
+
+public class TestGenericComponent<C> : MonoBehaviour, ISerializationCallbackReceiver
+{
+    C value;
+
+    public void OnBeforeSerialize()
+    {
+        BridgeManager.logger.LogInfo("----------- ONBEFORESERIALIZE CALLED!! --------------");
+        Debug.Log("Value of C: " + value?.ToString());
+    }
+
+    public void OnAfterDeserialize()
+    {
+        BridgeManager.logger.LogInfo("----------- ONAFTERDESERIALIZE CALLED!! --------------");
+        Debug.Log("Value of C: " + value?.ToString());
+    }
+}
+
+public class ImplementedTestGenericComponent : TestGenericComponent<int>
+{
+
+}
+public class StringImplementedTestGenericComponent : TestGenericComponent<string>
+{
+
 }
 #endif

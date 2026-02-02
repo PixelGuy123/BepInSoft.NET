@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using BepInSerializer.Core.Serialization.Converters.Models;
 
 namespace BepInSerializer.Core.Serialization.Converters;
@@ -14,16 +15,18 @@ internal class ArrayConverter : FieldConverter
 
     public override object Convert(FieldContext context)
     {
-        var sourceArray = (Array)context.OriginalValue;
-        if (sourceArray == null) return null;
-        var elementType = context.ValueType.GetElementType();
+        if (context.OriginalValue is not Array sourceArray) return null;
         int rank = sourceArray.Rank;
+        var elementType = context.ValueType.GetElementType();
+
+        // If the array is not allowed to be populated, return null
+        if (!context.ContainsAllowCollectionNesting && !CanArrayBeRecursivelyPopulated(elementType))
+            return null;
 
         // Get the lengths of all dimensions
         int[] lengths = new int[rank];
         for (int i = 0; i < rank; i++)
             lengths[i] = sourceArray.GetLength(i);
-
 
         // Create the new Multi-Dimensional Array
         if (!TryConstructNewArray(context, lengths, out var newArray))
@@ -64,4 +67,8 @@ internal class ArrayConverter : FieldConverter
             }
         }
     }
+
+    // Whether it can be converted or not based on elementType
+    protected virtual bool CanArrayBeRecursivelyPopulated(Type elementType) =>
+        elementType == typeof(string) || !typeof(IEnumerable).IsAssignableFrom(elementType); // If the type is not an IEnumerable (except strings), continue
 }

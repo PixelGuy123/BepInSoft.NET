@@ -18,11 +18,11 @@ internal static class BridgeManagerDebugger
 
         // Run benchmarks (uncomment as needed)
         RunBenchmark(1);
-        RunBenchmark(2);
-        RunBenchmark(5);
-        RunBenchmark(25);
-        RunBenchmark(50);
-        RunBenchmark(100);
+        // RunBenchmark(2);
+        // RunBenchmark(5);
+        // RunBenchmark(25);
+        // RunBenchmark(50);
+        // RunBenchmark(100);
 
         // Make a basic sprite array
         var sampleTexture = Texture2D.blackTexture;

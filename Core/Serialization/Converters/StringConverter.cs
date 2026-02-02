@@ -11,7 +11,7 @@ internal class StringConverter : FieldConverter
 
     public override object Convert(FieldContext context)
     {
-        if (context.OriginalValue == null || context.OriginalValue is not string ogStrVal) return null;
-        return string.Copy(ogStrVal); // Makes a new copy of the string
+        if (context.OriginalValue == null || context.ValueType != typeof(string)) return null;
+        return string.Copy((string)context.OriginalValue); // Makes a new copy of the string
     }
 }

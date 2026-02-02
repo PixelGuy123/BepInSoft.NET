@@ -5,6 +5,7 @@ using HarmonyLib;
 using System.Collections.Generic;
 using BepInSerializer.Core.Models;
 using System.Linq;
+using UnityEngine;
 
 namespace BepInSerializer.Utils;
 
@@ -18,8 +19,8 @@ internal static class ReflectionUtils
     // Caching system
     internal static LRUCache<FieldInfo, Func<object, object>> FieldInfoGetterCache;
     internal static LRUCache<PropertyInfo, Func<object, object>> PropertyInfoGetterCache;
-    internal static LRUCache<FieldInfo, Action<object, object>> FieldInfoSetterCache;
-    internal static LRUCache<PropertyInfo, Action<object, object>> PropertyInfoSetterCache;
+    internal static LRUCache<FieldInfo, Func<object, object, object>> FieldInfoSetterCache;
+    internal static LRUCache<PropertyInfo, Func<object, object, object>> PropertyInfoSetterCache;
     internal static LRUCache<string, Type> TypeNameCache;
     internal static LRUCache<string, Func<object, object>> ConstructorCache;
     internal static LRUCache<BaseTypeElementTypeItem, Func<object>> GenericActivatorConstructorCache;
@@ -29,197 +30,81 @@ internal static class ReflectionUtils
     internal static LRUCache<Type, List<FieldInfo>> TypeToFieldsInfoCache;
     internal static LRUCache<Type, List<PropertyInfo>> TypeToPropertiesInfoCache;
     internal static LRUCache<Type, Dictionary<string, FieldInfo>> FieldInfoCache;
-    public static List<FieldInfo> GetSerializableFieldInfos(this Type type)
+
+    // ----- Public API -----
+    public static List<FieldInfo> GetUnserializableFieldInfos(this Type type)
     {
-        if (TypeToFieldsInfoCache.NullableTryGetValue(type, out var fields))
-            return fields;
-
-        // Cache fields for this specific type call
-        fields = AccessTools.GetDeclaredFields(type);
         bool isDebugEnabled = BridgeManager.enableDebugLogs.Value;
-        bool isDeclaringTypeAComponent = type.IsUnityComponentType(); // If the declaring type is a component, Unity serialization rules apply
-
-        // Filter out the fields that cannot be serialized
-        for (int i = fields.Count - 1; i >= 0; i--)
-        {
-            var field = fields[i];
-
-            // Static or non-writeable is irrelevant
-            if (field.IsStatic || field.IsLiteral || field.IsInitOnly)
-            {
-                fields.RemoveAt(i);
-                continue;
-            }
-
-            Type fieldType = field.FieldType;
-
-            // Apply Serialization implementation (private fields can't be serialized, like in Unity)
-            if (!field.DoesFieldPassUnityValidationRules())
-            {
-                // Skip if it's a primitive
-                if (isDebugEnabled)
-                {
-                    BridgeManager.logger.LogInfo($"{field.Name} SKIPPED.");
-                }
-                fields.RemoveAt(i);
-                continue;
-            }
-
-            if (isDeclaringTypeAComponent && fieldType.CanUnitySerialize())
-            {
-                // Skip if it can be serialized by default
-                if (isDebugEnabled)
-                {
-                    BridgeManager.logger.LogInfo($"{field.Name} SKIPPED.");
-                }
-                fields.RemoveAt(i);
-                continue;
-            }
-        }
-
-        // Try to get fields from base types
-        var baseType = type.BaseType;
-        if (baseType != null && baseType != typeof(object))
-        {
-            var baseFields = baseType.GetSerializableFieldInfos();
-            fields.AddRange(baseFields);
-        }
-
-        TypeToFieldsInfoCache.NullableAdd(type, fields);
-        return fields;
+        bool isDeclaringTypeAComponent = type.IsUnityComponentType();
+        return InternalGetUnserializableFieldInfos(type, isDeclaringTypeAComponent, isDebugEnabled);
     }
 
-    public static List<PropertyInfo> GetSerializablePropertyInfos(this Type type)
+    public static List<PropertyInfo> GetUnserializablePropertyInfos(this Type type)
     {
-        // If no cache, do expensive part
         if (TypeToPropertiesInfoCache.NullableTryGetValue(type, out var properties))
             return properties;
 
-        // Cache fields for this specific type call
-        properties = AccessTools.GetDeclaredProperties(type);
+        properties = [];
 
-        // Filter out the fields that cannot be serialized
-        for (int i = properties.Count - 1; i >= 0; i--)
+        foreach (var property in AccessTools.GetDeclaredProperties(type))
         {
-            var property = properties[i];
-
-            // Static is irrelevant
-            if (property.IsStatic())
-            {
-                properties.RemoveAt(i);
-                continue;
-            }
-
-            // The property must have getter and setter, and one getter that's without parameters (there's get_Item(int32))
-            if (!property.CanWrite || property.GetGetMethod(true) == null || property.GetGetMethod(true).GetParameters().Length != 0)
-            {
-                properties.RemoveAt(i);
-                continue;
-            }
+            if (ShouldIncludeProperty(property))
+                properties.Add(property);
         }
 
         // Get the base type for properties
         var baseType = type.BaseType;
         if (baseType != null && baseType != typeof(object))
         {
-            var baseProperties = baseType.GetSerializablePropertyInfos();
-            properties.AddRange(baseProperties);
+            properties.AddRange(baseType.GetUnserializablePropertyInfos());
         }
 
         TypeToPropertiesInfoCache.NullableAdd(type, properties);
         return properties;
     }
 
-    public static Func<object, object> CreateFieldGetter(this FieldInfo fieldInfo)
-    {
-        if (FieldInfoGetterCache.NullableTryGetValue(fieldInfo, out var getter)) return getter;
 
-        var instanceParam = Expression.Parameter(typeof(object), "instance");
-
-        // Convert instance to the declaring type
-        var typedInstance = Expression.Convert(instanceParam, fieldInfo.DeclaringType);
-
-        // Access the field
-        var fieldExp = Expression.Field(typedInstance, fieldInfo);
-
-        // Convert result to object if needed
-        var resultExp = fieldInfo.FieldType.IsValueType ?
-            Expression.Convert(fieldExp, typeof(object)) :
-            (Expression)fieldExp;
-
-        var lambda = Expression.Lambda<Func<object, object>>(resultExp, instanceParam).Compile();
-        FieldInfoGetterCache.NullableAdd(fieldInfo, lambda);
-        return lambda;
-    }
-
-    public static Func<object, object> CreatePropertyGetter(this PropertyInfo propertyInfo)
-    {
-        if (PropertyInfoGetterCache.NullableTryGetValue(propertyInfo, out var getter)) return getter;
-
-        var instanceParam = Expression.Parameter(typeof(object), "instance");
-
-        // Convert instance to the declaring type
-        var typedInstance = Expression.Convert(instanceParam, propertyInfo.DeclaringType);
-
-        // Access the property
-        var propertyExp = Expression.Property(typedInstance, propertyInfo);
-
-        // Convert result to object if needed
-        var resultExp = propertyInfo.PropertyType.IsValueType ?
-            Expression.Convert(propertyExp, typeof(object)) :
-            (Expression)propertyExp;
-
-        var lambda = Expression.Lambda<Func<object, object>>(resultExp, instanceParam).Compile();
-        PropertyInfoGetterCache.NullableAdd(propertyInfo, lambda);
-        return lambda;
-    }
-
-    public static Action<object, object> CreateFieldSetter(this FieldInfo fieldInfo)
-    {
-        if (FieldInfoSetterCache.NullableTryGetValue(fieldInfo, out var setter)) return setter;
-
-        var instanceParam = Expression.Parameter(typeof(object), "instance");
-        var valueParam = Expression.Parameter(typeof(object), "value");
-
-        // Convert instance to the declaring type
-        var typedInstance = Expression.Convert(instanceParam, fieldInfo.DeclaringType);
-        var typedValue = Expression.Convert(valueParam, fieldInfo.FieldType);
-
-        // (Assign) Set the field
-        var assignExp = Expression.Assign(
-            Expression.Field(typedInstance, fieldInfo),
-            typedValue
+    public static Func<object, object> CreateFieldGetter(this FieldInfo fieldInfo) =>
+        CreateMemberGetter(
+            fieldInfo,
+            FieldInfoGetterCache,
+            fi => fi.DeclaringType,
+            fi => fi.FieldType,
+            Expression.Field
         );
 
-        var lambda = Expression.Lambda<Action<object, object>>(assignExp, instanceParam, valueParam).Compile();
-        FieldInfoSetterCache.NullableAdd(fieldInfo, lambda);
-        return lambda;
-    }
 
-    public static Action<object, object> CreatePropertySetter(this PropertyInfo propertyInfo)
-    {
-        if (PropertyInfoSetterCache.NullableTryGetValue(propertyInfo, out var setter)) return setter;
-
-        var instanceParam = Expression.Parameter(typeof(object), "instance");
-        var valueParam = Expression.Parameter(typeof(object), "value");
-
-        // Convert instance to the declaring type
-        var typedInstance = Expression.Convert(instanceParam, propertyInfo.DeclaringType);
-        var typedValue = Expression.Convert(valueParam, propertyInfo.PropertyType);
-
-        // (Assign) Set the property
-        var assignExp = Expression.Assign(
-            Expression.Property(typedInstance, propertyInfo),
-            typedValue
+    public static Func<object, object> CreatePropertyGetter(this PropertyInfo propertyInfo) =>
+        CreateMemberGetter(
+            propertyInfo,
+            PropertyInfoGetterCache,
+            pi => pi.DeclaringType,
+            pi => pi.PropertyType,
+            Expression.Property
         );
 
-        var lambda = Expression.Lambda<Action<object, object>>(assignExp, instanceParam, valueParam).Compile();
-        PropertyInfoSetterCache.NullableAdd(propertyInfo, lambda);
-        return lambda;
-    }
+    public static Func<object, object, object> CreateFieldSetter(this FieldInfo fieldInfo) =>
+        CreateMemberSetter(
+            fieldInfo,
+            FieldInfoSetterCache,
+            fi => fi.DeclaringType,
+            fi => fi.FieldType,
+            Expression.Field
+        );
 
 
-    // There are some Unity components that have their own constructor for duplication (new Material(Material))
+    public static Func<object, object, object> CreatePropertySetter(this PropertyInfo propertyInfo) =>
+        CreateMemberSetter(
+            propertyInfo,
+            PropertyInfoSetterCache,
+            pi => pi.DeclaringType,
+            pi => pi.PropertyType,
+            Expression.Property
+        );
+
+
+
+    // There are some Unity components that have their own constructor for duplication (eg.: new Material(Material))
     public static bool TryGetSelfActivator(this Type type, out Func<object, object> func)
     {
         if (SelfActivatorConstructorCache.NullableTryGetValue(type, out func)) return true;
@@ -249,7 +134,7 @@ internal static class ReflectionUtils
         if (type.IsGenericType || type.IsGenericTypeDefinition)
         {
             // BridgeManager.logger.LogInfo($"This is a parameterless generic type: {type}. Using generic parameterless constructor.");
-            return type.GetGenericParameterlessConstructor();
+            return type.GetGenericParameterlessConstructor(type.GetGenericArguments());
         }
 
         // Check for cache
@@ -276,7 +161,7 @@ internal static class ReflectionUtils
     {
         // If it is not already a type definition, make it one
         if (!genericDefinition.IsGenericTypeDefinition)
-            return genericDefinition.GetGenericTypeDefinition().GetGenericParameterlessConstructor(genericDefinition.GetGenericArguments());
+            genericDefinition = genericDefinition.GetGenericTypeDefinition();
 
         var typeElement = new BaseTypeElementTypeItem(genericDefinition, elementTypes);
 
@@ -296,7 +181,7 @@ internal static class ReflectionUtils
 
         if (constructor != null)
         {
-            // Class with explicit parameterless constructor or struct with explicit parameterless constructor (C# 10+)
+            // Class with explicit parameterless constructor or struct with explicit parameterless constructor
             newExp = Expression.New(constructor);
         }
         else if (constructedType.IsValueType)
@@ -367,12 +252,12 @@ internal static class ReflectionUtils
 
     public static FieldInfo GetFastField(this Type compType, string fieldName)
     {
-        if (FieldInfoCache == null) return AccessTools.Field(compType, fieldName);
+        if (FieldInfoCache == null) return AccessToolsNoLogging.Field(compType, fieldName);
 
         var fields = FieldInfoCache.GetValue(compType, t => []);
         if (!fields.TryGetValue(fieldName, out var field))
         {
-            field = AccessTools.Field(compType, fieldName);
+            field = AccessToolsNoLogging.Field(compType, fieldName);
             fields[fieldName] = field;
         }
         return field;
@@ -387,5 +272,121 @@ internal static class ReflectionUtils
             t = t.BaseType;
         }
         return false;
+    }
+
+    // ----- Private API -----
+    private static bool ShouldIncludeField(FieldInfo field, bool isDeclaringTypeAComponent, bool isDebugEnabled)
+    {
+        // Static or non-writeable is irrelevant
+        if (field.IsStatic || field.IsLiteral || field.IsInitOnly)
+            return false;
+
+        // Apply Serialization implementation (private fields can't be serialized, like in Unity)
+        if (!field.DoesFieldPassUnityValidationRules())
+        {
+            if (isDebugEnabled)
+                BridgeManager.logger.LogInfo($"{field.Name} SKIPPED FOR NOT PASSING VALIDATION RULES.");
+            return false;
+        }
+        if (isDebugEnabled)
+            BridgeManager.logger.LogInfo($"IsDeclaringTypeComponent: {isDeclaringTypeAComponent}");
+        if (isDeclaringTypeAComponent && field.FieldType.CanUnitySerialize())
+        {
+            if (isDebugEnabled)
+                BridgeManager.logger.LogInfo($"{field.Name} SKIPPED FOR NATIVE SERIALIZATION.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ShouldIncludeProperty(PropertyInfo property)
+    {
+        // Static is irrelevant
+        if (property.IsStatic())
+            return false;
+
+        // The property must have getter and setter, and one getter that's without parameters
+        if (!property.CanWrite ||
+            property.GetGetMethod(true) == null ||
+            property.GetGetMethod(true).GetParameters().Length != 0)
+            return false;
+
+        return true;
+    }
+    // Recursively search, but already knowing the declaring type is a component from the beginning
+    private static List<FieldInfo> InternalGetUnserializableFieldInfos(Type type, bool isDeclaringTypeAComponent, bool isDebugEnabled)
+    {
+        if (TypeToFieldsInfoCache.NullableTryGetValue(type, out var fields))
+            return fields;
+
+        fields = [];
+        foreach (var field in AccessTools.GetDeclaredFields(type))
+        {
+            if (ShouldIncludeField(field, isDeclaringTypeAComponent, isDebugEnabled))
+                fields.Add(field);
+        }
+
+        // Try to get fields from base types
+        var baseType = type.BaseType;
+        if (baseType != null && baseType != typeof(object) && baseType != typeof(Component))
+            fields.AddRange(InternalGetUnserializableFieldInfos(baseType, isDeclaringTypeAComponent, isDebugEnabled));
+
+        TypeToFieldsInfoCache.NullableAdd(type, fields);
+        return fields;
+    }
+
+    private static Func<object, object> CreateMemberGetter<TMember>(
+    TMember memberInfo,
+    LRUCache<TMember, Func<object, object>> cache,
+    Func<TMember, Type> getDeclaringType,
+    Func<TMember, Type> getMemberType,
+    Func<Expression, TMember, Expression> createMemberAccess)
+    where TMember : MemberInfo
+    {
+        if (cache.NullableTryGetValue(memberInfo, out var getter))
+            return getter;
+
+        var instanceParam = Expression.Parameter(typeof(object), "instance");
+        var typedInstance = Expression.Convert(instanceParam, getDeclaringType(memberInfo));
+        var memberExp = createMemberAccess(typedInstance, memberInfo);
+
+        var resultExp = getMemberType(memberInfo).IsValueType
+            ? Expression.Convert(memberExp, typeof(object))
+            : memberExp;
+
+        getter = Expression.Lambda<Func<object, object>>(resultExp, instanceParam).Compile();
+        cache.NullableAdd(memberInfo, getter);
+        return getter;
+    }
+
+    private static Func<object, object, object> CreateMemberSetter<TMember>(
+    TMember memberInfo,
+    LRUCache<TMember, Func<object, object, object>> cache,
+    Func<TMember, Type> getDeclaringType,
+    Func<TMember, Type> getMemberType,
+    Func<Expression, TMember, Expression> createMemberAccess)
+    where TMember : MemberInfo
+    {
+        if (cache.NullableTryGetValue(memberInfo, out var setter))
+            return setter;
+
+        var instanceParam = Expression.Parameter(typeof(object), "instance");
+        var valueParam = Expression.Parameter(typeof(object), "value");
+
+        var typedInstance = Expression.Variable(getDeclaringType(memberInfo), "typedInstance");
+        var typedValue = Expression.Convert(valueParam, getMemberType(memberInfo));
+
+        // Unbox, modify, then box back
+        var block = Expression.Block(
+            [typedInstance],
+            Expression.Assign(typedInstance, Expression.Convert(instanceParam, getDeclaringType(memberInfo))),
+            Expression.Assign(createMemberAccess(typedInstance, memberInfo), typedValue),
+            Expression.Convert(typedInstance, typeof(object))  // Box modified struct
+        );
+
+        setter = Expression.Lambda<Func<object, object, object>>(block, instanceParam, valueParam).Compile();
+        cache.NullableAdd(memberInfo, setter);
+        return setter;
     }
 }

@@ -7,22 +7,22 @@ using UnityEngine;
 namespace BepInSerializer.Core.Serialization.Converters;
 
 /// <summary>
-/// Base class for all field converters used in the serialization system.
+/// Base class for all field Converters used in the serialization system.
 /// </summary>
 public abstract class FieldConverter
 {
     // ----- Public API -----
     /// <summary>
-    /// Delegate for setting a value (using optimized caching).
+    /// Delegate for setting a value (using optimized caching) and that returns back the modified value (for the case of structs).
     /// </summary>
     /// <param name="obj">The object to set the data into.</param>
     /// <param name="value">The new value to be inserted.</param>
-    public delegate void SetValue(object obj, object value);
+    public delegate object SetValue(object obj, object value);
     /// <summary>
-    /// Determines whether this converter can convert the given field context.
+    /// Determines whether this Converter can convert the given field context.
     /// </summary>
     /// <param name="context">The context to be evaluated.</param>
-    /// <returns><see langword="true"/> if the converter can handle the context; otherwise, <see langword="false"/>.</returns>
+    /// <returns><see langword="true"/> if the Converter can handle the context; otherwise, <see langword="false"/>.</returns>
     public abstract bool CanConvert(FieldContext context);
     /// <summary>
     /// Converts the field based on the provided context and Converter type.
@@ -147,7 +147,7 @@ public abstract class FieldConverter
     /// <param name="fieldConverterAction">The action to be applied on each field's context.</param>
     protected void ManageFieldsFromType(FieldContext context, Type type, Action<FieldContext, SetValue> fieldConverterAction) =>
         // Go through each field to convert them as well
-        type.GetSerializableFieldInfos().ForEach(
+        type.GetUnserializableFieldInfos().ForEach(
             (field) => fieldConverterAction(
                 FieldContext.CreateSubContext(context, field),
                 (fieldHolder, fieldValue) => field.CreateFieldSetter()(fieldHolder, fieldValue)
@@ -161,7 +161,7 @@ public abstract class FieldConverter
     /// <param name="propertyConverterAction">The action to be applied on each property's context.</param>
     protected void ManagePropertiesFromType(FieldContext context, Type type, Action<FieldContext, SetValue> propertyConverterAction) =>
         // Go through each field to convert them as well
-        type.GetSerializablePropertyInfos().ForEach(
+        type.GetUnserializablePropertyInfos().ForEach(
             (property) => propertyConverterAction(
                 FieldContext.CreateSubContext(context, property),
                 (obj, value) => property.CreatePropertySetter()(obj, value)

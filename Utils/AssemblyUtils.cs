@@ -35,8 +35,7 @@ internal static class AssemblyUtils
             return box;
 
         // If the dll is not from BepInEx/Plugins, this gotta be a managed assembly file
-        bool isManaged = !assembly.TryGetAssemblyDirectoryName(out string dirName) ||
-                 !dirName.Contains($"BepInEx{Path.DirectorySeparatorChar}plugins");
+        bool isManaged = IsTypeFromManagedSource(assembly);
 
         if (_cacheIsAvailable)
             TypeIsManagedCache.NullableAdd(assembly, isManaged);
@@ -68,8 +67,7 @@ internal static class AssemblyUtils
         if (!isUnity)
         {
             // BepInEx check to exclude mod types
-            if (assembly.TryGetAssemblyDirectoryName(out string dirName) &&
-                dirName.Contains($"BepInEx{Path.DirectorySeparatorChar}plugins"))
+            if (!IsTypeFromManagedSource(assembly))
             {
                 TypeIsUnityManagedCache.NullableAdd(assembly, false);
                 return false;
@@ -82,33 +80,43 @@ internal static class AssemblyUtils
 
     public static bool CanUnitySerialize(this Type type)
     {
-        // First, what it CAN serialize by default
-        if (type.IsPrimitive || type == typeof(string) || type.IsEnum) return true;
+        // Primitive types Unity always supports
+        if (type.IsPrimitive || type == typeof(string) || type.IsEnum)
+            return true;
 
-        // If it's assignable or from an Unity Assembly here, then it can go
-        if (type.IsFromGameAssemblies() || typeof(UnityEngine.Object).IsAssignableFrom(type)) return true;
+        // Check if it's a standard collection, check its members (first depth). The first depth should NOT be a secondary collection (nesting is not supported)
+        if (type.IsStandardCollection())
+            return type.GetTypesFromArray(1).TrueForAll(t => !typeof(ICollection).IsAssignableFrom(t) && t.CanUnitySerialize());
 
-        // Whether the type is a Unity Component type
+        // Types from game assemblies or Unity types
+        if (type.IsFromGameAssemblies() || typeof(UnityEngine.Object).IsAssignableFrom(type))
+            return true;
+
+        // Component types
         return type.IsUnityComponentType();
     }
 
     public static bool IsUnityComponentType(this Type type)
     {
-        var elementTypes = type.GetTypesFromArray();
-        return elementTypes.TrueForAll(t => t == typeof(GameObject) || typeof(Component).IsAssignableFrom(t));
+        // If it's a collection, try to get the element types
+        if (type.IsStandardCollection())
+        {
+            var elementTypes = type.GetTypesFromArray();
+            return elementTypes.TrueForAll(t => t == typeof(GameObject) || typeof(Component).IsAssignableFrom(t));
+        }
+        return type == typeof(GameObject) || typeof(Component).IsAssignableFrom(type);
     }
 
     // Expect the most basic collection types to be checked, not IEnumerable in general
     public static bool IsStandardCollection(this Type t, bool includeDictionaries = false) =>
     t.IsArray ||
-    typeof(IList).IsAssignableFrom(t) ||
-    (includeDictionaries && typeof(IDictionary).IsAssignableFrom(t));
+    (t.IsGenericType && (t.GetGenericTypeDefinition() == typeof(List<>) ||
+    (includeDictionaries && t.GetGenericTypeDefinition() == typeof(Dictionary<,>))));
 
     public static List<Type> GetTypesFromArray(this Type collectionType, int layersToCheck = -1)
     {
         // Normalize the minimum layer boundaries
-        if (layersToCheck <= 0)
-            layersToCheck = -1;
+        layersToCheck = layersToCheck <= 0 ? -1 : layersToCheck;
 
         var typeDepthItem = new TypeDepthItem(collectionType, layersToCheck);
         if (CollectionNestedElementTypesCache.NullableTryGetValue(typeDepthItem, out var results)) return results;
@@ -161,5 +169,12 @@ internal static class AssemblyUtils
         }
 
         results.Add(collectionType);
+    }
+
+    private static bool IsTypeFromManagedSource(Assembly assembly)
+    {
+        // Shared logic for determining if assembly is from managed (non-plugin) source
+        return !assembly.TryGetAssemblyDirectoryName(out string dirName) ||
+               !dirName.Contains($"BepInEx{Path.DirectorySeparatorChar}plugins");
     }
 }

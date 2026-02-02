@@ -4,15 +4,15 @@ using UnityEngine;
 using BepInSerializer.Utils;
 using BepInSerializer.Core.Models;
 using System.Reflection;
+using HarmonyLib;
 
 namespace BepInSerializer.Core.Serialization;
 
 internal static class SerializationRegistry
 {
-    // Weak table uses WeakReferences; if one key from Type is nulled out, this cache will release it too
-    // The StrongBox is just to hold the boolean (struct) into a reference type wrapper (object)
     private readonly static HashSet<Type> _cachedRootTypes = [];
-    internal readonly static Dictionary<Type, List<FieldInfo>> ComponentFieldMap = [];
+    private readonly static Dictionary<Type, List<FieldInfo>> ComponentFieldMap = [];
+    private readonly static Dictionary<Type, FieldInfo> ComponentCallbackReceiverBlockageMap = [];
     internal static LRUCache<Type, List<FieldInfo>> LongHierarchyComponentFieldMap; // Uses LRUCache to be a temporary cache for long-hierarchy components
 
     // ------ Public API ------
@@ -91,27 +91,38 @@ internal static class SerializationRegistry
         return fieldInfos.Count != 0 ? fieldInfos : null;
     }
 
+    public static FieldInfo TryGetReceiverBlockageField(Type componentType) => ComponentCallbackReceiverBlockageMap.GetValueSafe(componentType);
+
 
     // ---- Private Logic ----
     private static void ScanComponent(Type rootComponentType)
     {
         // Cache fields for this specific type call
-        var fields = rootComponentType.GetSerializableFieldInfos();
+        var fields = rootComponentType.GetUnserializableFieldInfos();
         bool isDebugEnabled = BridgeManager.enableDebugLogs.Value;
 
         for (int i = 0; i < fields.Count; i++)
         {
             var field = fields[i];
-            // Register Target
+            // === General Field Mapping ===
             if (ComponentFieldMap.TryGetValue(rootComponentType, out var infos))
                 infos.Add(field);
             else
-                ComponentFieldMap[rootComponentType] = [field];
+                ComponentFieldMap[rootComponentType] = new List<FieldInfo>(fields.Count) { field }; // Make the capacity of the whole collection
 
-            if (isDebugEnabled)
-            {
-                BridgeManager.logger.LogInfo($"Registered: {field.DeclaringType.Name}.{field.Name} -> {field.FieldType}");
-            }
+            if (isDebugEnabled) BridgeManager.logger.LogInfo($"Registered: {field.DeclaringType.Name}.{field.Name} -> {field.FieldType}");
+        }
+
+        // === Specific Field Mapping ===
+        // -- ISerializationCallbackReceiver blockage flag --
+        RegisterSpecialField(ConstantStorage.CALLBACK_RECEIVER_BLOCKAGE_FIELD_NAME, (f) => f.FieldType == typeof(bool), ComponentCallbackReceiverBlockageMap);
+        return;
+
+        void RegisterSpecialField(string fieldName, Func<FieldInfo, bool> fieldPredicate, Dictionary<Type, FieldInfo> toMapField)
+        {
+            var field = rootComponentType.GetFastField(fieldName);
+            if (field != null && fieldPredicate(field))
+                toMapField[rootComponentType] = field;
         }
     }
 }

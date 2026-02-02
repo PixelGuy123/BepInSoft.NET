@@ -1,3 +1,4 @@
+#if DEBUG
 using UnityEngine;
 using System;
 
@@ -127,3 +128,4 @@ public abstract class CustomAnimation<Frame, UnderlyingType> where Frame : Custo
         this.animationLength = 0f;
     }
 }
+#endif
